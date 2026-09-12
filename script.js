@@ -39,7 +39,7 @@ function buildTeams() {
     btn.className = 'team-card';
     btn.type = 'button';
     btn.style.setProperty('--team-color', teamColors[i - 1]);
-    btn.innerHTML = `<span class="team-dot"></span><div><strong>Équipe ${i}</strong><small>Appuyez pour rejoindre</small></div>`;
+    btn.innerHTML = `<div class="team-main"><span class="team-dot"></span><strong>Équipe ${i}</strong></div><small class="team-hint">Appuyez pour rejoindre</small>`;
     btn.addEventListener('click', () => selectTeam(i));
     grid.appendChild(btn);
 
@@ -169,6 +169,39 @@ function buildLeaderboard() {
 document.getElementById('publishRanking').addEventListener('click', e => {
   e.currentTarget.textContent = e.currentTarget.textContent === 'Publier' ? 'Publié ✓' : 'Publier';
 });
+
+
+function resetBattle() {
+  const confirmed = window.confirm(
+    "Remettre toute la Prompt Battle à zéro ?\n\nLes équipes, réponses, scores et la manche en cours seront réinitialisés. Cette action servira à préparer une nouvelle formation."
+  );
+  if (!confirmed) return;
+
+  clearInterval(state.timerId);
+  state.team = 1;
+  state.round = 0;
+  state.seconds = 300;
+  state.running = false;
+  state.timerId = null;
+
+  document.getElementById('promptInput').value = '';
+  document.getElementById('resultInput').value = '';
+  document.getElementById('saveState').textContent = 'Non soumis';
+  document.getElementById('timerToggle').textContent = 'Démarrer';
+  document.getElementById('publishRanking').textContent = 'Publier';
+
+  document.querySelectorAll('.score-select').forEach(select => {
+    select.value = '3';
+  });
+  updateTotal();
+  loadRound();
+  buildTeams();
+  buildLeaderboard();
+
+  alert('La Prompt Battle a été remise à zéro. Vous pouvez démarrer une nouvelle session.');
+}
+
+document.getElementById('resetBattle').addEventListener('click', resetBattle);
 
 buildTeams();
 buildScores();

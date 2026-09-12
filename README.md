@@ -22,3 +22,9 @@ Placez ces quatre fichiers à la racine de la branche `v2-development` :
 - `style.css`
 - `script.js`
 - `README.md`
+
+
+## V2.1
+- Titre d’accueil en orange pour améliorer la lisibilité.
+- Cartes équipes réorganisées : point + nom coloré, consigne en dessous.
+- Bouton formateur « Remettre la battle à zéro » avec confirmation.

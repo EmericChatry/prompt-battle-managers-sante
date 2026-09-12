@@ -278,3 +278,58 @@ footer {
   .timer-block { width: 100%; }
   .primary, .secondary { width: 100%; }
 }
+
+
+/* Ajustements V2.1 */
+.hero-title {
+  color: var(--orange);
+  position: relative;
+  z-index: 2;
+}
+
+.team-card {
+  justify-content: flex-start;
+  gap: 18px;
+}
+.team-card .team-main {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+.team-card .team-main strong {
+  color: var(--team-color, var(--navy));
+  line-height: 1.15;
+}
+.team-card .team-hint {
+  display: block;
+  margin-top: 2px;
+  padding-left: 25px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+.trainer-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+.danger-ghost {
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid #d6a8a8;
+  background: #fff;
+  color: #9a3f3f;
+  font-weight: 750;
+  cursor: pointer;
+  transition: .16s ease;
+}
+.danger-ghost:hover {
+  background: #fff5f5;
+  border-color: #b95d5d;
+}
+@media (max-width: 700px) {
+  .trainer-head-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+}
