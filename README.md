@@ -1,22 +1,24 @@
-# Prompt Battle — Managers en santé
+# Prompt Battle — Managers en santé — V2 prototype
 
-Version 1.0 — application web statique pour une activité de formation à l'IA et à la méthode RCTF.
+Prototype statique de la future version collaborative.
 
-## Contenu
-- 3 défis progressifs
-- 5 minutes par manche
-- rappel RCTF
-- auto-évaluation sur 20
-- règle de départage en 60 secondes
-- responsive smartphone / ordinateur
-- aucune donnée collectée, aucune API, aucune clé secrète
+## Ce que contient cette version
+- identité visuelle inspirée de la charte GRIEPS fournie pour la formation ;
+- navigation Accueil fonctionnelle ;
+- accueil avec entrée Participant / Formateur ;
+- 8 équipes ;
+- 3 manches validées ;
+- chronomètre de 5 minutes ;
+- saisie du prompt et du résultat obtenu ;
+- autoévaluation /20 ;
+- aperçu d'un tableau de bord formateur et d'un classement.
 
-## Déploiement GitHub Pages
-1. Créer un dépôt GitHub, par exemple `prompt-battle-managers-sante`.
-2. Ajouter les 3 fichiers (`index.html`, `style.css`, `script.js`) et ce README à la racine.
-3. GitHub → Settings → Pages.
-4. Source : Deploy from a branch → `main` → `/ (root)` → Save.
-5. L’URL sera de la forme `https://TON-PSEUDO.github.io/prompt-battle-managers-sante/`.
+## Important
+Cette étape ne contient encore aucune base de données : les appareils ne communiquent pas entre eux. C'est volontaire. La synchronisation temps réel sera ajoutée dans une étape séparée avec Supabase après validation de l'interface.
 
-## Personnalisation
-Les défis sont dans `script.js`, le design dans `style.css` et l'interface dans `index.html`.
+## Fichiers à publier
+Placez ces quatre fichiers à la racine de la branche `v2-development` :
+- `index.html`
+- `style.css`
+- `script.js`
+- `README.md`

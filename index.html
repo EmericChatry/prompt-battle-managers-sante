@@ -1,6 +1,203 @@
-<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Prompt Battle — Managers en santé</title><meta name="description" content="Prompt Battle pour une formation IA destinée aux managers en santé"><link rel="stylesheet" href="style.css"></head><body><div class="app"><header><div class="brand">🥊 Prompt Battle</div><div id="progress">Accueil</div></header><main>
-<section id="home" class="screen active"><div class="card hero"><p class="eyebrow">FORMATION IA · MANAGEMENT EN SANTÉ</p><h1>Qui donnera le meilleur brief à l’IA ?</h1><p class="lead">3 défis · 5 minutes par manche. Utilisez RCTF pour obtenir le résultat le plus utile possible.</p><div class="rctf"><div><b>R</b><span>Rôle</span></div><div><b>C</b><span>Contexte</span></div><div><b>T</b><span>Tâche</span></div><div><b>F</b><span>Format</span></div></div><div class="rules"><h2>Comment jouer ?</h2><ol><li>Travaillez en équipe.</li><li>Construisez votre prompt avec RCTF.</li><li>Testez-le dans votre IA habituelle.</li><li>Jugez le <strong>résultat obtenu</strong>, pas seulement le prompt.</li></ol></div><button class="primary" onclick="startBattle()">Commencer →</button></div></section>
-<section id="challenge" class="screen"><div class="challenge-head"><div><p class="eyebrow" id="roundLabel"></p><h1 id="title"></h1></div><div class="timer" id="timer">05:00</div></div><div class="card"><h2>Situation</h2><p id="situation"></p><h2>Votre mission</h2><p id="mission"></p></div><div class="rctf mini"><div><b>R</b><span>Rôle</span></div><div><b>C</b><span>Contexte</span></div><div><b>T</b><span>Tâche</span></div><div><b>F</b><span>Format</span></div></div><div class="actions"><button class="secondary" onclick="toggleHelp()">Rappel RCTF</button><button class="primary" onclick="finishRound()">J’ai terminé →</button></div><div id="help" class="help hidden"><p><strong>R — Rôle :</strong> quelle expertise ou posture donner à l’IA ?</p><p><strong>C — Contexte :</strong> quelles informations changent réellement la réponse ?</p><p><strong>T — Tâche :</strong> que doit-elle produire, précisément ?</p><p><strong>F — Format :</strong> sous quelle forme, avec quelles contraintes ?</p></div></section>
-<section id="selfcheck" class="screen"><div class="card center"><p class="eyebrow" id="selfLabel"></p><h1>Votre résultat est-il vraiment utile ?</h1><p>Testez votre prompt dans votre IA puis préparez votre score pour le débrief.</p><div class="scores"><label>Pertinence <select><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select></label><label>Précision <select><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select></label><label>Contexte <select><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select></label><label>Utilité managériale <select><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select></label></div><p class="total">Score : <strong id="total">20</strong> / 20</p><button class="primary" onclick="nextRound()">Continuer →</button></div></section>
-<section id="final" class="screen"><div class="card center"><p class="eyebrow">BATTLE TERMINÉE</p><h1>Place au classement ! 🏆</h1><p>Le gagnant n’est pas celui qui a écrit le prompt le plus sophistiqué : c’est celui qui a obtenu le résultat le plus pertinent.</p><div class="sudden"><h2>⚡ Départage en cas d’égalité</h2><p><strong>60 secondes.</strong> Transformez votre meilleur résultat en une version deux fois plus courte, sans perdre les informations essentielles.</p></div><button class="secondary" onclick="restart()">Rejouer</button></div></section>
-</main><footer><span>Prompt Battle · Managers en santé</span><span>Aucune donnée collectée par cette application</span></footer></div><script src="script.js"></script></body></html>
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Prompt Battle — Managers en santé</title>
+  <meta name="description" content="Prompt Battle collaborative pour managers en santé" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <button class="brand" type="button" data-go="home" aria-label="Retour à l'accueil">
+        <span class="brand-mark">PB</span>
+        <span><strong>Prompt Battle</strong><small>Managers en santé</small></span>
+      </button>
+      <div class="topbar-actions">
+        <span class="status-pill" id="connectionStatus">Version démonstration</span>
+        <button class="ghost compact" type="button" data-go="home">Accueil</button>
+      </div>
+    </header>
+
+    <main>
+      <section id="home" class="screen active">
+        <div class="hero-grid">
+          <div class="hero-copy">
+            <p class="eyebrow">FORMATION-ACTION · IA & MANAGEMENT</p>
+            <h1>Qui donnera le meilleur brief à l’IA&nbsp;?</h1>
+            <p class="lead">Trois défis, cinq minutes par manche et une méthode commune : <strong>RCTF</strong>. L’objectif n’est pas d’écrire le prompt le plus compliqué, mais d’obtenir le résultat le plus utile.</p>
+            <div class="hero-actions">
+              <button class="primary" type="button" data-go="join">Rejoindre une partie</button>
+              <button class="secondary" type="button" data-go="trainer">Espace formateur</button>
+            </div>
+          </div>
+
+          <aside class="hero-card">
+            <p class="card-kicker">LA MÉTHODE</p>
+            <div class="rctf-grid">
+              <div><span>R</span><strong>Rôle</strong><small>Quelle posture pour l’IA ?</small></div>
+              <div><span>C</span><strong>Contexte</strong><small>Quelles informations sont utiles ?</small></div>
+              <div><span>T</span><strong>Tâche</strong><small>Que doit-elle produire ?</small></div>
+              <div><span>F</span><strong>Format</strong><small>Sous quelle forme ?</small></div>
+            </div>
+          </aside>
+        </div>
+
+        <div class="home-cards">
+          <article class="info-card">
+            <span class="number">01</span>
+            <h2>Construire</h2>
+            <p>Structurez votre demande avec RCTF et confrontez vos choix en équipe.</p>
+          </article>
+          <article class="info-card">
+            <span class="number">02</span>
+            <h2>Tester</h2>
+            <p>Utilisez l’IA de votre choix : ChatGPT, Claude, Copilot, Gemini ou autre.</p>
+          </article>
+          <article class="info-card">
+            <span class="number">03</span>
+            <h2>Comparer</h2>
+            <p>Déposez votre meilleur prompt et analysez la qualité du résultat obtenu.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="join" class="screen">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">PARTICIPANTS</p>
+            <h1>Choisissez votre équipe</h1>
+            <p class="muted">Dans la prochaine étape, ces équipes seront synchronisées entre tous les appareils grâce à Supabase.</p>
+          </div>
+          <button class="ghost" type="button" data-go="home">← Accueil</button>
+        </div>
+
+        <div class="team-grid" id="teamGrid"></div>
+      </section>
+
+      <section id="battle" class="screen">
+        <div class="battle-head">
+          <div>
+            <p class="eyebrow" id="roundLabel">MANCHE 1 / 3</p>
+            <h1 id="challengeTitle">Le mail impossible</h1>
+            <div class="team-badge" id="currentTeamBadge">Équipe 1</div>
+          </div>
+          <div class="timer-block">
+            <span>Temps restant</span>
+            <strong id="timer">05:00</strong>
+            <button class="tiny" id="timerToggle" type="button">Démarrer</button>
+          </div>
+        </div>
+
+        <div class="battle-layout">
+          <div class="column">
+            <article class="panel">
+              <p class="panel-label">SITUATION</p>
+              <p id="challengeSituation"></p>
+            </article>
+            <article class="panel accent-panel">
+              <p class="panel-label">VOTRE MISSION</p>
+              <p id="challengeMission"></p>
+            </article>
+            <button class="secondary full" id="rctfToggle" type="button">Afficher le rappel RCTF</button>
+            <div class="rctf-help hidden" id="rctfHelp">
+              <p><strong>R — Rôle :</strong> quelle expertise ou posture donner à l’IA ?</p>
+              <p><strong>C — Contexte :</strong> quelles informations changent réellement la réponse ?</p>
+              <p><strong>T — Tâche :</strong> que doit-elle produire précisément ?</p>
+              <p><strong>F — Format :</strong> sous quelle forme et avec quelles contraintes ?</p>
+            </div>
+          </div>
+
+          <div class="column">
+            <article class="panel form-panel">
+              <label for="promptInput">Votre prompt final</label>
+              <textarea id="promptInput" rows="9" placeholder="Écrivez ici le prompt que votre équipe souhaite soumettre…"></textarea>
+
+              <label for="resultInput">Résultat obtenu avec votre IA <span>(optionnel pour cette démonstration)</span></label>
+              <textarea id="resultInput" rows="7" placeholder="Collez ici la réponse obtenue dans votre IA…"></textarea>
+
+              <div class="submit-row">
+                <button class="primary" id="submitRound" type="button">Soumettre la manche</button>
+                <span class="save-state" id="saveState">Non soumis</span>
+              </div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section id="selfcheck" class="screen">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">AUTOÉVALUATION</p>
+            <h1>Comment jugez-vous votre résultat&nbsp;?</h1>
+          </div>
+          <div class="score-total"><span>Votre score</span><strong id="selfTotal">12</strong><small>/20</small></div>
+        </div>
+        <div class="score-grid" id="scoreGrid"></div>
+        <div class="bottom-actions">
+          <button class="secondary" type="button" data-go="battle">← Modifier ma réponse</button>
+          <button class="primary" id="nextRound" type="button">Manche suivante →</button>
+        </div>
+      </section>
+
+      <section id="trainer" class="screen">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">ESPACE FORMATEUR · APERÇU V2</p>
+            <h1>Piloter la Prompt Battle</h1>
+            <p class="muted">Cet écran est aujourd’hui une démonstration locale. À l’étape Supabase, les données apparaîtront ici en temps réel.</p>
+          </div>
+          <button class="ghost" type="button" data-go="home">← Accueil</button>
+        </div>
+
+        <div class="trainer-stats">
+          <div class="stat"><span>Équipes</span><strong>8</strong><small>créneaux disponibles</small></div>
+          <div class="stat"><span>Connectées</span><strong>0</strong><small>données locales uniquement</small></div>
+          <div class="stat"><span>Manche</span><strong id="trainerRound">1/3</strong><small>Le mail impossible</small></div>
+          <div class="stat"><span>Chrono</span><strong>05:00</strong><small>contrôle formateur à venir</small></div>
+        </div>
+
+        <div class="trainer-layout">
+          <article class="panel">
+            <div class="panel-title-row">
+              <div><p class="panel-label">ÉQUIPES</p><h2>État des soumissions</h2></div>
+              <span class="demo-chip">DÉMO</span>
+            </div>
+            <div class="trainer-teams" id="trainerTeams"></div>
+          </article>
+
+          <article class="panel leaderboard-panel">
+            <div class="panel-title-row">
+              <div><p class="panel-label">CLASSEMENT</p><h2>Résultats de la manche</h2></div>
+              <button class="tiny" type="button" id="publishRanking">Publier</button>
+            </div>
+            <div class="leaderboard" id="leaderboard"></div>
+            <p class="note">Le classement restera masqué côté participants jusqu’à ce que vous décidiez de le publier.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="final" class="screen">
+        <div class="final-card">
+          <p class="eyebrow">BATTLE TERMINÉE</p>
+          <h1>Place au débrief collectif.</h1>
+          <p>Comparez les productions, les choix de contexte, la formulation de la tâche et l’utilité réelle du résultat produit par l’IA.</p>
+          <div class="final-highlight"><span>⚡</span><div><strong>En cas d’égalité</strong><p>60 secondes pour raccourcir votre meilleur résultat de moitié sans perdre l’essentiel.</p></div></div>
+          <div class="hero-actions">
+            <button class="primary" type="button" data-go="home">Retour à l’accueil</button>
+            <button class="secondary" type="button" data-go="trainer">Voir l’espace formateur</button>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <span>Prompt Battle · Managers en santé</span>
+      <span>Prototype V2 · aucune donnée transmise</span>
+    </footer>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
