@@ -211,8 +211,9 @@ async function joinSessionByCode() {
   }
   try {
     await ensureAnonymousAuth();
-    const { data, error } = await db.from('sessions').select('*').eq('session_code', code).maybeSingle();
+    const { data: rows, error } = await db.rpc('get_session_for_join', { p_code: code });
     if (error) throw error;
+    const data = rows?.[0] || null;
     if (!data) {
       feedback.textContent = 'Aucune session ne correspond à ce code.';
       feedback.classList.add('error');
@@ -243,6 +244,12 @@ async function fetchTeams(sessionId) {
   return data || [];
 }
 
+async function fetchTeamsForJoin(sessionId) {
+  const { data, error } = await db.rpc('list_teams_for_session', { p_session_id: sessionId });
+  if (error) throw error;
+  return data || [];
+}
+
 async function fetchSubmissions(sessionId) {
   const { data, error } = await db.from('submissions').select('*').eq('session_id', sessionId).order('created_at');
   if (error) throw error;
@@ -257,7 +264,7 @@ async function fetchEvaluations(sessionId) {
 
 async function loadParticipantTeams() {
   if (!state.participantSession) return;
-  state.teams = await fetchTeams(state.participantSession.id);
+  state.teams = await fetchTeamsForJoin(state.participantSession.id);
   const mine = state.teams.find(t => t.owner_user_id === state.userId);
   if (mine) {
     state.team = mine.team_slot;
