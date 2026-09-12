@@ -333,3 +333,129 @@ footer {
     justify-content: flex-start;
   }
 }
+
+/* Connexion Supabase — V2.2 */
+.session-join-panel,
+.trainer-session-panel {
+  margin-bottom: 24px;
+}
+.session-join-panel label {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: 800;
+  color: var(--navy);
+}
+.inline-form {
+  display: flex;
+  gap: 10px;
+  align-items: stretch;
+  max-width: 600px;
+}
+.code-input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid #cbd8df;
+  border-radius: 12px;
+  padding: 13px 15px;
+  background: #fbfdfe;
+  color: var(--navy);
+  font: inherit;
+  font-weight: 850;
+  text-transform: uppercase;
+  letter-spacing: .14em;
+}
+.code-input:focus {
+  outline: 3px solid rgba(243,111,50,.14);
+  border-color: var(--orange);
+}
+.form-feedback {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: .9rem;
+}
+.form-feedback.error { color: #a13f3f; }
+.form-feedback.success { color: var(--success); font-weight: 700; }
+.selection-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin: 28px 0 16px;
+}
+.selection-head h2 { margin: 0; color: var(--navy); }
+.live-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  padding: 7px 10px;
+  background: #e9f6f1;
+  color: var(--success);
+  font-size: .78rem;
+  font-weight: 800;
+}
+.team-card.occupied {
+  background: #f2f5f6;
+  opacity: .65;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+.team-card.occupied:hover { transform: none; box-shadow: none; }
+.team-card.mine {
+  border: 2px solid var(--team-color, var(--navy));
+  background: #fff;
+}
+.team-card .team-status {
+  display: block;
+  margin-top: 6px;
+  padding-left: 25px;
+  font-size: .78rem;
+  font-weight: 750;
+}
+.team-card .team-status.free { color: var(--success); }
+.team-card .team-status.taken { color: var(--muted); }
+.team-card .team-status.mine { color: var(--team-color, var(--navy)); }
+.trainer-session-panel {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  align-items: center;
+}
+.trainer-session-panel h2 { margin: -6px 0 8px; color: var(--navy); }
+.compact-copy { margin: 0; }
+.session-action-block {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.session-code-card {
+  min-width: 260px;
+  padding: 14px 18px;
+  border: 1px solid #f4c6aa;
+  background: #fff6ef;
+  border-radius: 14px;
+  text-align: center;
+}
+.session-code-card span,
+.session-code-card small { display: block; color: var(--muted); }
+.session-code-card strong {
+  display: block;
+  margin: 3px 0;
+  color: var(--orange-dark);
+  font-size: 2rem;
+  letter-spacing: .14em;
+}
+.timer-block small { display: block; opacity: .78; font-size: .72rem; line-height: 1.25; }
+.state-live { color: var(--success); font-size: .85rem; font-weight: 760; }
+.connection-ok { background: #e9f6f1 !important; color: var(--success) !important; }
+.connection-error { background: #fff0f0 !important; color: #a13f3f !important; }
+
+@media (max-width: 760px) {
+  .inline-form,
+  .trainer-session-panel,
+  .selection-head { flex-direction: column; align-items: stretch; }
+  .session-action-block { justify-content: stretch; }
+  .session-code-card { min-width: 0; width: 100%; }
+}

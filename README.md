@@ -1,30 +1,20 @@
-# Prompt Battle — Managers en santé — V2 prototype
+# Prompt Battle — Managers en santé — V2.2
 
-Prototype statique de la future version collaborative.
+Première version multijoueur connectée à Supabase.
 
-## Ce que contient cette version
-- identité visuelle inspirée de la charte GRIEPS fournie pour la formation ;
-- navigation Accueil fonctionnelle ;
-- accueil avec entrée Participant / Formateur ;
-- 8 équipes ;
-- 3 manches validées ;
-- chronomètre de 5 minutes ;
-- saisie du prompt et du résultat obtenu ;
-- autoévaluation /20 ;
-- aperçu d'un tableau de bord formateur et d'un classement.
+## Ce que cette version teste
+
+- authentification anonyme automatique ;
+- création d'une session par le formateur ;
+- code de session à 6 caractères ;
+- inscription d'un participant dans l'une des 8 équipes ;
+- équipes occupées visibles par les autres participants ;
+- apparition en temps réel d'une équipe connectée dans l'espace formateur.
+
+## Avant le test
+
+Dans Supabase, ajouter les tables à la publication Realtime et empêcher un même utilisateur de réserver plusieurs équipes dans la même session (SQL fourni par ChatGPT lors de l'installation).
 
 ## Important
-Cette étape ne contient encore aucune base de données : les appareils ne communiquent pas entre eux. C'est volontaire. La synchronisation temps réel sera ajoutée dans une étape séparée avec Supabase après validation de l'interface.
 
-## Fichiers à publier
-Placez ces quatre fichiers à la racine de la branche `v2-development` :
-- `index.html`
-- `style.css`
-- `script.js`
-- `README.md`
-
-
-## V2.1
-- Titre d’accueil en orange pour améliorer la lisibilité.
-- Cartes équipes réorganisées : point + nom coloré, consigne en dessous.
-- Bouton formateur « Remettre la battle à zéro » avec confirmation.
+La sauvegarde des prompts, le chrono collectif de 5 min 30, la notation et la suppression réelle des sessions seront ajoutés dans les versions suivantes.
