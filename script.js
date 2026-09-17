@@ -2,22 +2,18 @@ const SUPABASE_URL = 'https://cmaikgqdyjqyrtkcwhkz.supabase.co';
 const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_aGRxie9hlojGMP1Sttz9hg_dn4XbLc-';
 const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 
-const ROUND_SECONDS = 330;
+const ROUND_SECONDS = 720;
+const RESTORE_WINDOW_HOURS = 10;
 const challenges = [
   {
     title: "Le mail impossible",
-    situation: "Vous devez annoncer un changement de planning qui entraîne des changements de poste pour plusieurs professionnels. La décision est nécessaire, mais elle risque de générer de la tension et un sentiment d’injustice.",
-    mission: "Construisez un prompt RCTF permettant à votre IA de rédiger un message clair qui explique la décision, limite les tensions et préserve la confiance de l’équipe."
+    situation: "Vous dirigez une unité de médecine de 28 lits. Aujourd’hui, l’équipe de jour travaille en horaires de 7h30 et une équipe de nuit dédiée, distincte, travaille en horaires de 10 heures. À partir du 1er septembre, cette organisation doit être remplacée par un roulement unique en 12 heures, où chaque soignant alternera des postes de jour et de nuit au lieu d’appartenir à une équipe fixe. La décision est actée par la direction. Sur les 14 soignants de l’unité, les 5 qui composent aujourd’hui l’équipe de nuit sont particulièrement opposés au changement : ils souhaitent conserver leurs postes fixes en 10 heures et ne veulent pas basculer sur un roulement jour-nuit en 12 heures. Deux membres de l’équipe de jour expriment aussi des réserves, par crainte de la fatigue liée aux postes de 12 heures.",
+    mission: "Construisez un prompt RCTF permettant à votre IA de rédiger le message d’annonce à toute l’équipe. Il doit expliquer la raison du changement sans minimiser son impact, aborder directement la question de l’équipe de nuit et de son attachement au 10 heures, et ouvrir la voie à un dialogue sur l’adaptation de l’organisation à ces résistances, sans remettre en cause le principe du passage en 12 heures lui-même."
   },
   {
     title: "Le briefing d’équipe",
-    situation: "Des tensions apparaissent dans l’équipe autour de la charge de travail et de la répartition des tâches. Plusieurs professionnels disent ne pas se sentir entendus.",
-    mission: "Demandez à l’IA de préparer votre prochain briefing : objectifs, déroulé, questions à poser, points de vigilance et manière de faire émerger des solutions avec l’équipe."
-  },
-  {
-    title: "Le boss final",
-    situation: "Vous devez préparer un entretien avec un professionnel compétent et apprécié, mais dont les retards répétés ont désormais un impact sur l’organisation du service.",
-    mission: "Obtenez une préparation d’entretien comprenant les objectifs, une formulation pour aborder le problème, des questions ouvertes, les réactions défensives possibles, vos réponses de manager et les pièges à éviter."
+    situation: "Vous encadrez une équipe de 12 aides-soignants et 3 infirmiers en EHPAD. Depuis le départ non remplacé de deux aides-soignantes en juin, la charge de travail s’est reportée sur le reste de l’équipe. Cinq professionnels vous ont alerté informellement ces deux dernières semaines : ils jugent la répartition des tâches entre les deux ailes du bâtiment inéquitable, et deux d’entre eux évoquent une demande de mutation. Lors de la dernière réunion, plusieurs personnes sont restées silencieuses alors qu’elles semblaient concernées. Le prochain briefing d’équipe a lieu dans une semaine.",
+    mission: "Demandez à l’IA de préparer ce briefing : objectifs de la réunion, déroulé minuté, questions ouvertes qui donneront la parole aux plus silencieux sans braquer les plus vocaux, points de vigilance si le ton monte, et une méthode pour faire émerger collectivement des pistes de réorganisation plutôt que de trancher seul en amont. Si vous êtes à l’aise avec l’oral, c’est l’occasion de tester le mode vocal de votre IA pour formuler votre prompt à voix haute plutôt qu’à l’écrit : une autre manière de préciser Rôle, Contexte, Tâche et Format."
   }
 ];
 
@@ -83,7 +79,7 @@ function makeSessionCode() {
 }
 
 function displayRoundNumber(session) {
-  return Math.min(3, Math.max(1, session?.current_round || 1));
+  return Math.min(2, Math.max(1, session?.current_round || 1));
 }
 
 function formatTime(totalSeconds) {
@@ -190,10 +186,17 @@ function renderSessionQrCode() {
 
 function renderTrainerSession() {
   if (!state.trainerSession) return;
-  document.getElementById('trainerSessionTitle').textContent = 'Session active';
-  document.getElementById('trainerSessionHelp').textContent = 'Projetez le QR code : les participants ouvrent directement la bonne session, puis choisissent leur équipe.';
+  const finished = state.trainerSession.status === 'finished';
+  document.getElementById('trainerSessionTitle').textContent = finished ? 'Battle terminée' : 'Session active';
+  document.getElementById('trainerSessionHelp').textContent = finished
+    ? 'Cette session est terminée. Vous pouvez encore consulter ses résultats ci-dessous, ou créer une nouvelle session pour un prochain groupe.'
+    : 'Projetez le QR code : les participants ouvrent directement la bonne session, puis choisissent leur équipe.';
   document.getElementById('trainerSessionCode').textContent = state.trainerSession.session_code;
   document.getElementById('sessionCodeCard').classList.remove('hidden');
+  const createButton = document.getElementById('createSessionButton');
+  createButton.classList.toggle('hidden', !finished);
+  createButton.disabled = false;
+  if (finished) createButton.textContent = 'Créer une nouvelle session';
   renderSessionQrCode();
   renderTrainerControls();
 }
@@ -464,7 +467,7 @@ async function loadParticipantRound(force = false) {
   const roundNumber = displayRoundNumber(state.participantSession);
   const index = roundNumber - 1;
   const c = challenges[index];
-  document.getElementById('roundLabel').textContent = `MANCHE ${roundNumber} / 3`;
+  document.getElementById('roundLabel').textContent = `MANCHE ${roundNumber} / 2`;
   document.getElementById('challengeTitle').textContent = c.title;
   document.getElementById('challengeSituation').textContent = c.situation;
   document.getElementById('challengeMission').textContent = c.mission;
@@ -482,6 +485,7 @@ async function loadParticipantRound(force = false) {
   if (force || document.getElementById('activeRoundNumber').value !== String(roundNumber)) {
     document.getElementById('promptInput').value = data?.prompt_text || '';
     document.getElementById('resultInput').value = data?.ai_response_text || '';
+    document.getElementById('promptCountInput').value = data?.prompt_count ?? '';
   }
   document.getElementById('activeRoundNumber').value = String(roundNumber);
   document.getElementById('saveState').textContent = data?.submitted_at ? submissionStatusText(data) : 'Non soumis';
@@ -501,6 +505,7 @@ function renderParticipantRoundState(existingSubmission = null) {
   const statusBox = document.getElementById('participantRoundStatus');
   const promptInput = document.getElementById('promptInput');
   const resultInput = document.getElementById('resultInput');
+  const promptCountInput = document.getElementById('promptCountInput');
   const submit = document.getElementById('submitRound');
 
   if (finished) {
@@ -508,6 +513,7 @@ function renderParticipantRoundState(existingSubmission = null) {
     statusBox.textContent = 'Battle terminée — le formateur peut maintenant lancer le débrief.';
     promptInput.disabled = true;
     resultInput.disabled = true;
+    promptCountInput.disabled = true;
     submit.disabled = true;
     submit.textContent = 'Battle terminée';
     renderParticipantRankingAvailability();
@@ -520,6 +526,7 @@ function renderParticipantRoundState(existingSubmission = null) {
     statusBox.textContent = `Manche ${roundNumber} prête. Attendez le lancement du formateur.`;
     promptInput.disabled = true;
     resultInput.disabled = true;
+    promptCountInput.disabled = true;
     submit.disabled = true;
     submit.textContent = 'En attente du lancement';
   } else if (paused) {
@@ -527,6 +534,7 @@ function renderParticipantRoundState(existingSubmission = null) {
     statusBox.textContent = 'Chrono en pause par le formateur. Vous pouvez continuer à préparer votre réponse.';
     promptInput.disabled = false;
     resultInput.disabled = false;
+    promptCountInput.disabled = false;
     submit.disabled = false;
     submit.textContent = 'Soumettre la manche';
   } else if (running) {
@@ -534,6 +542,7 @@ function renderParticipantRoundState(existingSubmission = null) {
     statusBox.textContent = 'Manche en cours — le chrono est commun à toutes les équipes.';
     promptInput.disabled = false;
     resultInput.disabled = false;
+    promptCountInput.disabled = false;
     submit.disabled = false;
   }
   renderParticipantTimer();
@@ -575,6 +584,8 @@ async function submitCurrentRound() {
   if (!state.participantSession || !state.teamId) return;
   const prompt = document.getElementById('promptInput').value.trim();
   const aiResponse = document.getElementById('resultInput').value.trim();
+  const promptCountRaw = document.getElementById('promptCountInput').value;
+  const promptCount = promptCountRaw ? Number(promptCountRaw) : null;
   if (!prompt) {
     alert('Ajoutez au moins votre prompt avant de soumettre la manche.');
     return;
@@ -593,6 +604,7 @@ async function submitCurrentRound() {
     round_number: roundNumber,
     prompt_text: prompt,
     ai_response_text: aiResponse,
+    prompt_count: promptCount,
     submitted_at: new Date().toISOString(),
     delay_seconds: delaySeconds
   };
@@ -610,74 +622,12 @@ async function submitCurrentRound() {
     if (result.error) throw result.error;
     state.currentSubmissionId = result.data.id;
     document.getElementById('saveState').textContent = submissionStatusText(result.data);
-    buildScores(result.data.self_score);
-    showScreen('selfcheck');
   } catch (error) {
     console.error(error);
     alert(`Impossible d’enregistrer la réponse : ${error.message}`);
   } finally {
     button.disabled = false;
     renderParticipantRoundState();
-  }
-}
-
-const scoreItems = [
-  ["Pertinence", "Le résultat répond-il réellement au problème posé ?"],
-  ["Précision", "La demande limite-t-elle les réponses vagues ou génériques ?"],
-  ["Contexte", "Les informations données permettent-elles une réponse adaptée ?"],
-  ["Utilité managériale", "Pourriez-vous réellement vous appuyer sur ce résultat ?"]
-];
-
-function buildScores(existingTotal = null) {
-  const grid = document.getElementById('scoreGrid');
-  const defaults = existingTotal ? distributeScore(existingTotal) : [3,3,3,3];
-  grid.innerHTML = scoreItems.map((item, index) => `
-    <article class="score-card">
-      <h3>${item[0]}</h3><p>${item[1]}</p>
-      <select class="score-select" aria-label="${item[0]}">
-        ${[1,2,3,4,5].map(n => `<option value="${n}" ${n === defaults[index] ? 'selected' : ''}>${n} / 5</option>`).join('')}
-      </select>
-    </article>`).join('');
-  document.querySelectorAll('.score-select').forEach(s => s.addEventListener('change', updateTotal));
-  updateTotal();
-}
-
-function distributeScore(total) {
-  const target = Math.min(20, Math.max(4, Number(total)));
-  const arr = [1,1,1,1];
-  let remaining = target - 4;
-  let i = 0;
-  while (remaining > 0) {
-    if (arr[i] < 5) { arr[i]++; remaining--; }
-    i = (i + 1) % 4;
-  }
-  return arr;
-}
-
-function updateTotal() {
-  const total = [...document.querySelectorAll('.score-select')].reduce((sum, el) => sum + Number(el.value), 0);
-  document.getElementById('selfTotal').textContent = total;
-}
-
-async function saveSelfScore() {
-  if (!state.currentSubmissionId) return;
-  const total = [...document.querySelectorAll('.score-select')].reduce((sum, el) => sum + Number(el.value), 0);
-  const button = document.getElementById('nextRound');
-  button.disabled = true;
-  button.textContent = 'Enregistrement…';
-  try {
-    const { error } = await db.from('submissions').update({ self_score: total }).eq('id', state.currentSubmissionId);
-    if (error) throw error;
-    document.getElementById('selfcheckWaiting').classList.remove('hidden');
-    button.textContent = 'Autoévaluation enregistrée ✓';
-    document.getElementById('saveState').textContent = `✓ Soumis · autoévaluation ${total}/20`;
-    await refreshParticipantSession();
-    if (state.participantSession?.status !== 'finished' && !state.participantSession?.ranking_published) showScreen('battle');
-  } catch (error) {
-    console.error(error);
-    alert(`Impossible d’enregistrer l’autoévaluation : ${error.message}`);
-    button.disabled = false;
-    button.textContent = 'Valider mon autoévaluation';
   }
 }
 
@@ -755,8 +705,9 @@ function renderReviewList() {
     const team = state.teams.find(t => t.id === sub.team_id);
     const evaluation = state.evaluations.find(e => e.submission_id === sub.id);
     const delay = Number(sub.delay_seconds || 0);
+    const promptCountLabel = sub.prompt_count ? ` · ${sub.prompt_count} prompt${sub.prompt_count > 1 ? 's' : ''}` : '';
     return `<button class="review-list-item ${state.selectedSubmissionId === sub.id ? 'active' : ''}" type="button" data-review-id="${sub.id}">
-      <span><span class="review-team-name"><i class="team-dot" style="background:${teamColors[(team?.team_slot || 1) - 1]}"></i>${team?.team_name || 'Équipe'}</span><small>${delay > 0 ? `Hors délai +${formatTime(delay)}` : 'Dans le temps'} · autoéval. ${sub.self_score ?? '—'}/20</small></span>
+      <span><span class="review-team-name"><i class="team-dot" style="background:${teamColors[(team?.team_slot || 1) - 1]}"></i>${team?.team_name || 'Équipe'}</span><small>${delay > 0 ? `Hors délai +${formatTime(delay)}` : 'Dans le temps'}${promptCountLabel}</small></span>
       <span class="review-score-chip">${evaluation ? `${evaluation.total}/20` : 'À noter'}</span>
     </button>`;
   }).join('');
@@ -795,8 +746,9 @@ function renderReviewDetail(submissionId) {
     ['Utilité managériale', 'Le manager pourrait-il réellement utiliser ou adapter cette production ?']
   ];
   const delay = Number(sub.delay_seconds || 0);
+  const promptCountLabel = sub.prompt_count ? ` · ${sub.prompt_count} prompt${sub.prompt_count > 1 ? 's' : ''}` : '';
   detail.innerHTML = `<div class="review-production">
-    <div class="review-meta"><div><p class="panel-label">MANCHE ${sub.round_number} · ${challenges[sub.round_number - 1].title.toUpperCase()}</p><h3>${team?.team_name || 'Équipe'}</h3></div><span class="review-self">Autoévaluation : ${sub.self_score ?? '—'}/20 · ${delay > 0 ? `+${formatTime(delay)}` : 'dans le temps'}</span></div>
+    <div class="review-meta"><div><p class="panel-label">MANCHE ${sub.round_number} · ${challenges[sub.round_number - 1].title.toUpperCase()}</p><h3>${team?.team_name || 'Équipe'}</h3></div><span class="review-self">${delay > 0 ? `+${formatTime(delay)}` : 'dans le temps'}${promptCountLabel}</span></div>
     <div class="production-block"><p class="panel-label">PROMPT</p><p>${escapeHtml(sub.prompt_text || '—')}</p></div>
     <div class="production-block"><p class="panel-label">RÉSULTAT IA</p><p>${escapeHtml(sub.ai_response_text || 'Aucun résultat IA déposé.')}</p></div>
     <div class="evaluation-grid">
@@ -868,7 +820,7 @@ function renderLeaderboard() {
     board.innerHTML = '<p class="muted">Le classement apparaîtra dès qu’une première production sera notée.</p>';
     return;
   }
-  board.innerHTML = ranking.map((item, index) => `<div class="leader-row"><strong>${index + 1}</strong><span>${escapeHtml(item.team.team_name)}<span class="leader-detail">${item.rounds}/3 manche${item.rounds > 1 ? 's' : ''} notée${item.rounds > 1 ? 's' : ''}</span></span><span>${item.total}/${item.rounds * 20}</span></div>`).join('');
+  board.innerHTML = ranking.map((item, index) => `<div class="leader-row"><strong>${index + 1}</strong><span>${escapeHtml(item.team.team_name)}<span class="leader-detail">${item.rounds}/2 manche${item.rounds > 1 ? 's' : ''} notée${item.rounds > 1 ? 's' : ''}</span></span><span>${item.total}/${item.rounds * 20}</span></div>`).join('');
 }
 
 function renderRankingPublicationState() {
@@ -897,9 +849,9 @@ async function toggleRankingPublication() {
       alert('Aucune production n’est encore notée. Notez au moins une équipe avant de publier le classement.');
       return;
     }
-    const incomplete = ranking.filter(item => item.rounds < 3).length;
+    const incomplete = ranking.filter(item => item.rounds < 2).length;
     const message = state.trainerSession.status === 'finished'
-      ? (incomplete ? `${incomplete} équipe(s) n’ont pas encore 3 manches notées. Publier quand même le classement ?` : 'Publier le classement final sur les téléphones des participants ?')
+      ? (incomplete ? `${incomplete} équipe(s) n’ont pas encore 2 manches notées. Publier quand même le classement ?` : 'Publier le classement final sur les téléphones des participants ?')
       : 'La battle n’est pas encore terminée. Publier un classement provisoire aux participants ?';
     if (!window.confirm(message)) return;
   }
@@ -916,13 +868,14 @@ function showProjection(submissionId) {
   if (!sub) return;
   const team = state.teams.find(t => t.id === sub.team_id);
   const evaluation = state.evaluations.find(e => e.submission_id === sub.id);
+  const promptCountLabel = sub.prompt_count ? `${sub.prompt_count} prompt${sub.prompt_count > 1 ? 's' : ''} · ` : '';
   document.getElementById('projectionRoundLabel').textContent = `MANCHE ${sub.round_number} · ${challenges[sub.round_number - 1].title}`;
   document.getElementById('projectionTeamTitle').textContent = team?.team_name || 'Production';
   document.getElementById('projectionPrompt').textContent = sub.prompt_text || '—';
   document.getElementById('projectionResponse').textContent = sub.ai_response_text || 'Aucun résultat IA déposé.';
   document.getElementById('projectionScore').innerHTML = evaluation
-    ? `<span>Évaluation formateur · Pertinence ${evaluation.pertinence}/5 · Précision ${evaluation.precision}/5 · Contexte ${evaluation.context_score}/5 · Utilité ${evaluation.utility}/5</span><strong>${evaluation.total}/20</strong>`
-    : '<span>Production non encore notée.</span><strong>—/20</strong>';
+    ? `<span>${promptCountLabel}Évaluation formateur · Pertinence ${evaluation.pertinence}/5 · Précision ${evaluation.precision}/5 · Contexte ${evaluation.context_score}/5 · Utilité ${evaluation.utility}/5</span><strong>${evaluation.total}/20</strong>`
+    : `<span>${promptCountLabel}Production non encore notée.</span><strong>—/20</strong>`;
   showScreen('projection');
 }
 
@@ -937,7 +890,7 @@ function renderTrainerControls() {
   }
 
   const roundNumber = displayRoundNumber(session);
-  document.getElementById('trainerRound').textContent = `${roundNumber}/3`;
+  document.getElementById('trainerRound').textContent = `${roundNumber}/2`;
   document.getElementById('trainerRoundName').textContent = challenges[roundNumber - 1].title;
   document.getElementById('trainerControlTitle').textContent = `Manche ${roundNumber} — ${challenges[roundNumber - 1].title}`;
 
@@ -964,9 +917,9 @@ function renderTrainerControls() {
   // Le formateur doit toujours pouvoir écourter une manche en cours.
   // Le bouton reste donc actif pendant waiting / running / paused.
   nextButton.disabled = session.status === 'finished' || state.trainerTransitionBusy;
-  if (roundNumber >= 3) {
+  if (roundNumber >= 2) {
     nextButton.textContent = session.status === 'running' || session.status === 'paused'
-      ? '⏹ Clôturer la manche 3 et terminer la battle'
+      ? `⏹ Clôturer la manche ${roundNumber} et terminer la battle`
       : 'Terminer la battle';
   } else {
     nextButton.textContent = session.status === 'running' || session.status === 'paused'
@@ -1060,13 +1013,13 @@ async function prepareNextRound() {
     const current = displayRoundNumber(freshSession);
     const isActive = freshSession.status === 'running' || freshSession.status === 'paused';
 
-    const message = current >= 3
+    const message = current >= 2
       ? (isActive
-          ? 'Clôturer la manche 3 maintenant et terminer la Prompt Battle ? Le chrono sera arrêté immédiatement.'
+          ? `Clôturer la manche ${current} maintenant et terminer la Prompt Battle ? Le chrono sera arrêté immédiatement.`
           : 'Terminer la Prompt Battle ? Les participants verront que la battle est terminée.')
       : (isActive
           ? `Clôturer la manche ${current} maintenant et préparer la manche ${current + 1} ? Le chrono s’arrêtera immédiatement et les participants basculeront sur le prochain briefing.`
-          : `Préparer la manche ${current + 1} ? Le chrono sera remis à 05:30 et les participants basculeront sur le prochain briefing.`);
+          : `Préparer la manche ${current + 1} ? Le chrono sera remis à 12:00 et les participants basculeront sur le prochain briefing.`);
 
     // On libère temporairement l’état busy pendant la boîte de dialogue : certains navigateurs
     // recalculent mal l’état d’un bouton désactivé après un confirm() bloquant.
@@ -1078,10 +1031,10 @@ async function prepareNextRound() {
     if (button) {
       button.disabled = true;
       button.setAttribute('aria-busy', 'true');
-      button.textContent = current >= 3 ? 'Clôture de la battle…' : `Préparation de la manche ${current + 1}…`;
+      button.textContent = current >= 2 ? 'Clôture de la battle…' : `Préparation de la manche ${current + 1}…`;
     }
 
-    const patch = current >= 3
+    const patch = current >= 2
       ? { status: 'finished', round_started_at: null, round_duration_seconds: 0 }
       : { current_round: current + 1, status: 'waiting', round_started_at: null, round_duration_seconds: ROUND_SECONDS };
 
@@ -1098,10 +1051,10 @@ async function prepareNextRound() {
 
     // Vérification explicite : si le navigateur a raté l’événement Realtime, on relit la session.
     const verified = await refreshTrainerSessionState({ render: false });
-    if (current < 3 && Number(verified.current_round) !== current + 1) {
+    if (current < 2 && Number(verified.current_round) !== current + 1) {
       throw new Error('Le changement de manche n’a pas été confirmé par la base. Réessayez.');
     }
-    if (current >= 3 && verified.status !== 'finished') {
+    if (current >= 2 && verified.status !== 'finished') {
       throw new Error('La fin de battle n’a pas été confirmée par la base. Réessayez.');
     }
   } catch (error) {
@@ -1139,11 +1092,11 @@ async function openPublicRanking(silent = false) {
     const board = document.getElementById('publicLeaderboard');
     const podium = document.getElementById('publicPodium');
     const ownNote = document.getElementById('ownTeamRankingNote');
-    const scoreLabel = item => `${item.total}/${item.rounds === 3 ? 60 : item.rounds * 20}`;
+    const scoreLabel = item => `${item.total}/${item.rounds * 20}`;
     const medals = ['🥇', '🥈', '🥉'];
 
-    podium.innerHTML = ranking.slice(0, 3).map((item, index) => `<article class="podium-card place-${index + 1} ${item.team.id === state.teamId ? 'own-team' : ''}"><span class="podium-medal">${medals[index]}</span><strong>${escapeHtml(item.team.team_name)}</strong><span>${scoreLabel(item)}</span><small>${item.rounds}/3 manches notées</small></article>`).join('');
-    board.innerHTML = ranking.length ? ranking.map((item, index) => `<div class="leader-row ${item.team.id === state.teamId ? 'own-team' : ''}"><strong>${index + 1}</strong><span>${escapeHtml(item.team.team_name)}${item.team.id === state.teamId ? '<em>Votre équipe</em>' : ''}<span class="leader-detail">${item.rounds}/3 manche${item.rounds > 1 ? 's' : ''} notée${item.rounds > 1 ? 's' : ''}</span></span><span>${scoreLabel(item)}</span></div>`).join('') : '<p class="muted">Le classement vient d’être publié. Chargement des notes…</p>';
+    podium.innerHTML = ranking.slice(0, 3).map((item, index) => `<article class="podium-card place-${index + 1} ${item.team.id === state.teamId ? 'own-team' : ''}"><span class="podium-medal">${medals[index]}</span><strong>${escapeHtml(item.team.team_name)}</strong><span>${scoreLabel(item)}</span><small>${item.rounds}/2 manches notées</small></article>`).join('');
+    board.innerHTML = ranking.length ? ranking.map((item, index) => `<div class="leader-row ${item.team.id === state.teamId ? 'own-team' : ''}"><strong>${index + 1}</strong><span>${escapeHtml(item.team.team_name)}${item.team.id === state.teamId ? '<em>Votre équipe</em>' : ''}<span class="leader-detail">${item.rounds}/2 manche${item.rounds > 1 ? 's' : ''} notée${item.rounds > 1 ? 's' : ''}</span></span><span>${scoreLabel(item)}</span></div>`).join('') : '<p class="muted">Le classement vient d’être publié. Chargement des notes…</p>';
 
     const ownIndex = ranking.findIndex(item => item.team.id === state.teamId);
     if (ownNote) {
@@ -1246,8 +1199,24 @@ document.getElementById('rctfToggle').addEventListener('click', () => {
   document.getElementById('rctfToggle').textContent = help.classList.contains('hidden') ? 'Afficher le rappel RCTF' : 'Masquer le rappel RCTF';
 });
 
+document.getElementById('copyPromptButton').addEventListener('click', async () => {
+  const promptText = document.getElementById('promptInput').value;
+  if (!promptText.trim()) {
+    alert('Écrivez votre prompt avant de le copier.');
+    return;
+  }
+  const btn = document.getElementById('copyPromptButton');
+  try {
+    await navigator.clipboard.writeText(promptText);
+    const original = btn.textContent;
+    btn.textContent = '✓ Copié';
+    setTimeout(() => { btn.textContent = original; }, 1500);
+  } catch (error) {
+    alert('Impossible de copier automatiquement. Sélectionnez le texte et copiez-le manuellement.');
+  }
+});
+
 document.getElementById('submitRound').addEventListener('click', submitCurrentRound);
-document.getElementById('nextRound').addEventListener('click', saveSelfScore);
 document.getElementById('startRoundButton').addEventListener('click', startOrResumeRound);
 document.getElementById('pauseRoundButton').addEventListener('click', pauseRound);
 document.getElementById('nextTrainerRoundButton').addEventListener('click', prepareNextRound);
@@ -1303,19 +1272,28 @@ async function handleSessionLink() {
   input.value = code;
   await joinSessionByCode();
 }
+
 async function restoreTrainerSession() {
-  if (!state.userId) return;
+  if (!state.userId) {
+    resetTrainerSessionPanel();
+    return;
+  }
   try {
+    const cutoff = new Date(Date.now() - RESTORE_WINDOW_HOURS * 3600 * 1000).toISOString();
     const { data, error } = await db
       .from('sessions')
       .select('*')
       .eq('created_by', state.userId)
       .neq('status', 'finished')
+      .gte('created_at', cutoff)
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle();
     if (error) throw error;
-    if (!data) return;
+    if (!data) {
+      resetTrainerSessionPanel();
+      return;
+    }
     state.trainerSession = data;
     state.reviewRound = displayRoundNumber(data);
     state.selectedSubmissionId = null;
@@ -1325,11 +1303,22 @@ async function restoreTrainerSession() {
     startTrainerSyncLoop();
   } catch (error) {
     console.debug('Reprise de session formateur impossible', error);
+    resetTrainerSessionPanel();
   }
 }
+
+function resetTrainerSessionPanel() {
+  document.getElementById('trainerSessionTitle').textContent = 'Aucune session active';
+  document.getElementById('trainerSessionHelp').textContent = 'Créez une session pour générer un code à six caractères.';
+  const createButton = document.getElementById('createSessionButton');
+  if (createButton) {
+    createButton.disabled = false;
+    createButton.classList.remove('hidden');
+  }
+}
+
 async function init() {
   buildTrainerTeams();
-  buildScores();
   startTimerLoop();
   try {
     await ensureAnonymousAuth();
@@ -1338,6 +1327,7 @@ async function init() {
   } catch (error) {
     console.error(error);
     setConnectionStatus('Connexion impossible', 'error');
+    resetTrainerSessionPanel();
   }
 }
 
