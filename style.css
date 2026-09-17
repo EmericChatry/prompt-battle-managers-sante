@@ -334,7 +334,7 @@ footer {
   }
 }
 
-/* Connexion Supabase — V2.2 */
+/* Connexion Supabase â€” V2.2 */
 .session-join-panel,
 .trainer-session-panel {
   margin-bottom: 24px;
@@ -460,7 +460,7 @@ footer {
   .session-code-card { min-width: 0; width: 100%; }
 }
 
-/* V2.3 — chrono collectif & soumissions */
+/* V2.3 â€” chrono collectif & soumissions */
 .round-status {
   margin: 0 0 14px;
   padding: 12px 14px;
@@ -508,7 +508,7 @@ footer {
   .trainer-master-timer { width: 100%; }
 }
 
-/* V2.4 — notation, projection et classement */
+/* V2.4 â€” notation, projection et classement */
 .trainer-team { flex-wrap: wrap; }
 .trainer-team .team-actions { display: flex; align-items: center; gap: 8px; }
 .trainer-team .review-button { padding: 7px 10px; font-size: .78rem; }
@@ -561,7 +561,7 @@ footer {
   .evaluation-grid { grid-template-columns:1fr; }
 }
 
-/* Finitions V2.5 — publication & classement mobile */
+/* Finitions V2.5 â€” publication & classement mobile */
 .publication-badge {
   display: inline-flex;
   align-items: center;
@@ -691,7 +691,7 @@ footer {
 }
 
 
-/* V2.10 — partage de session par QR code */
+/* V2.10 â€” partage de session par QR code */
 .session-share-grid {
   display: grid;
   grid-template-columns: minmax(180px, .8fr) minmax(330px, 1.4fr);
@@ -728,4 +728,32 @@ footer {
 @media (max-width: 760px) {
   .session-share-grid { grid-template-columns: 1fr; }
   .qr-share-block { flex-direction: column; text-align: center; }
+}
+
+/* V2.11 â€” liens vers les IA, copie du prompt, compteur de prompts */
+.ai-links-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 18px;
+}
+.ai-links-row .tiny,
+.ai-link {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+}
+.number-input {
+  width: 140px;
+  border: 1px solid #cbd8df;
+  border-radius: 12px;
+  padding: 10px 12px;
+  font: inherit;
+  color: var(--ink);
+  background: #fbfdfe;
+  margin-bottom: 18px;
+}
+.number-input:focus {
+  outline: 3px solid rgba(243,111,50,.14);
+  border-color: var(--orange);
 }
