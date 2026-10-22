@@ -3,14 +3,52 @@ const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_aGRxie9hlojGMP1Sttz9hg_dn4XbLc-
 const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 
 // Durée de repli si un paquet ne la fournit pas (les paquets valides la définissent pour chaque scénario).
-const DEFAULT_ROUND_SECONDS = 720;
+const DEFAULT_ROUND_SECONDS = 900;
 const RESTORE_WINDOW_HOURS = 10;
 // Le moteur joue toujours 2 manches ; le contenu de chaque manche vient du paquet de la session (voir packs.js).
 const ROUND_COUNT = PromptBattlePacks.PACK_ROUND_COUNT;
 // Formation utilisée si une session ne précise pas de paquet.
 const DEFAULT_PACK_ID = 'managers';
 
-const teamColors = ["#183f59", "#f36f32", "#f2c94c", "#a94c58", "#2f7d68", "#6c63a8", "#557785", "#d98f4e"];
+// 10 équipes maximum (groupes de 2 ou 3). La base accepte les emplacements 1 à 10 depuis supabase-v2.13.sql.
+const TEAM_SLOTS = 10;
+const teamColors = ["#183f59", "#f36f32", "#f2c94c", "#a94c58", "#2f7d68", "#6c63a8", "#557785", "#d98f4e", "#2e86c1", "#8d6e63"];
+
+// Cases « Qu'avez-vous amélioré ? » de l'écran participant (clé enregistrée dans submissions.changes_made).
+const CHANGE_OPTIONS = {
+  role: 'Rôle précisé',
+  context: 'Contexte ajouté',
+  task: 'Tâche précisée',
+  format: 'Format imposé',
+  constraint: 'Contrainte ajoutée',
+  other: 'Autre amélioration'
+};
+// Le moteur note toujours 4 critères de 1 à 5 par manche (colonnes de trainer_evaluations).
+const CRITERIA_COUNT = 4;
+// Au-delà de cette longueur, un « prompt » ressemble plus à une réponse d'IA collée par erreur.
+const LONG_PROMPT_WARNING = 2500;
+
+// ---------- Étoiles ----------
+
+// Moyenne en étoiles (de 1 à 5) à partir du total de critères : 4 critères de 1 à 5 par manche notée.
+function averageStars(total, rounds) {
+  if (!rounds) return 0;
+  return Number(total) / (rounds * CRITERIA_COUNT);
+}
+
+function formatStarValue(value) {
+  return value.toFixed(1).replace('.', ',');
+}
+
+function starString(value) {
+  const full = Math.max(0, Math.min(5, Math.round(value)));
+  return '★'.repeat(full) + '☆'.repeat(5 - full);
+}
+
+function starsLabel(total, rounds) {
+  const average = averageStars(total, rounds);
+  return `${starString(average)} ${formatStarValue(average)}/5`;
+}
 const state = {
   userId: null,
   participantSession: null,
@@ -18,6 +56,7 @@ const state = {
   teams: [],
   submissions: [],
   evaluations: [],
+  feedback: [],
   reviewRound: 1,
   selectedSubmissionId: null,
   team: 1,
@@ -32,6 +71,7 @@ const state = {
   trainerTransitionBusy: false,
   rankingOpenInProgress: false,
   lastParticipantRound: null,
+  formRound: null,
   // Paquets de scénarios : un pour la session pilotée (formateur), un pour la session rejointe (participant).
   trainerPack: null,
   participantPack: null,
@@ -300,8 +340,10 @@ function renderTrainerSession() {
   document.getElementById('trainerSessionTitle').textContent = finished ? 'Battle terminée' : 'Session active';
   document.getElementById('trainerSessionHelp').textContent = finished
     ? 'Cette session est terminée. Vous pouvez encore consulter ses résultats ci-dessous, ou créer une nouvelle session pour un prochain groupe.'
-    : 'Projetez le QR code : les participants ouvrent directement la bonne session, puis choisissent leur équipe.';
+    : 'Envoyez le lien aux participants (idéal sur ordinateur) ou projetez le QR code : ils ouvrent directement la bonne session, puis choisissent leur équipe.';
   document.getElementById('trainerSessionCode').textContent = state.trainerSession.session_code;
+  const linkInput = document.getElementById('joinLinkInput');
+  if (linkInput) linkInput.value = buildParticipantJoinUrl(state.trainerSession.session_code);
   document.getElementById('sessionCodeCard').classList.remove('hidden');
   const packLine = document.getElementById('trainerSessionPack');
   if (packLine) {
@@ -393,6 +435,36 @@ async function fetchEvaluations(sessionId) {
   return data || [];
 }
 
+// Classement côté participant : seuls les totaux (équipe, manche, total) sont lus pour toutes les équipes,
+// par la fonction get_ranking_totals (supabase-v2.13b.sql). Le détail par critère n'est lu que pour sa propre équipe.
+// Si la fonction n'existe pas encore, on retombe sur la lecture directe (comportement V2.12).
+async function fetchRankingTotals(sessionId) {
+  const { data, error } = await db.rpc('get_ranking_totals', { p_session_id: sessionId });
+  if (error) {
+    console.debug('Totaux du classement indisponibles, lecture directe', error);
+    return fetchEvaluations(sessionId);
+  }
+  return data || [];
+}
+
+async function fetchOwnEvaluations(sessionId, teamId) {
+  if (!teamId) return [];
+  const { data, error } = await db.from('trainer_evaluations').select('*').eq('session_id', sessionId).eq('team_id', teamId).order('round_number');
+  if (error) throw error;
+  return data || [];
+}
+
+// Retours écrits du formateur (table team_feedback). La base ne renvoie à un participant que le retour de son équipe,
+// et seulement après la publication. Une erreur ne doit pas bloquer la notation : on renvoie alors une liste vide.
+async function fetchFeedback(sessionId) {
+  const { data, error } = await db.from('team_feedback').select('*').eq('session_id', sessionId);
+  if (error) {
+    console.debug('Retours indisponibles', error);
+    return [];
+  }
+  return data || [];
+}
+
 async function loadParticipantTeams() {
   if (!state.participantSession) return;
   state.teams = await fetchTeamsForJoin(state.participantSession.id);
@@ -446,18 +518,21 @@ function startTrainerSyncLoop() {
 
 async function refreshTrainerData() {
   if (!state.trainerSession) return;
-  const [teams, submissions, evaluations] = await Promise.all([
+  const [teams, submissions, evaluations, feedback] = await Promise.all([
     fetchTeams(state.trainerSession.id),
     fetchSubmissions(state.trainerSession.id),
-    fetchEvaluations(state.trainerSession.id)
+    fetchEvaluations(state.trainerSession.id),
+    fetchFeedback(state.trainerSession.id)
   ]);
   state.teams = teams;
   state.submissions = submissions;
   state.evaluations = evaluations;
+  state.feedback = feedback;
   if (!state.reviewRound) state.reviewRound = displayRoundNumber(state.trainerSession);
   buildTrainerTeams();
   renderReviewList();
   renderLeaderboard();
+  renderDebriefSynthesis();
   renderRankingPublicationState();
   renderTrainerControls();
 }
@@ -465,7 +540,7 @@ async function refreshTrainerData() {
 function buildParticipantTeams() {
   const grid = document.getElementById('teamGrid');
   grid.innerHTML = '';
-  for (let i = 1; i <= 8; i++) {
+  for (let i = 1; i <= TEAM_SLOTS; i++) {
     const existing = state.teams.find(t => t.team_slot === i);
     const isMine = existing?.owner_user_id === state.userId;
     const occupied = Boolean(existing) && !isMine;
@@ -619,14 +694,47 @@ async function loadParticipantRound(force = false) {
   if (error) throw error;
 
   state.currentSubmissionId = data?.id || null;
-  if (force || document.getElementById('activeRoundNumber').value !== String(roundNumber)) {
+  // Les champs sont remplis depuis la base à la première ouverture et à chaque changement de manche (pas pendant la frappe).
+  if (force || state.formRound !== roundNumber) {
+    document.getElementById('firstPromptInput').value = data?.first_prompt_text || '';
     document.getElementById('promptInput').value = data?.prompt_text || '';
-    document.getElementById('resultInput').value = data?.ai_response_text || '';
-    document.getElementById('promptCountInput').value = data?.prompt_count ?? '';
+    const savedChanges = Array.isArray(data?.changes_made) ? data.changes_made : [];
+    document.querySelectorAll('#changeOptions input[type="checkbox"]').forEach(box => {
+      box.checked = savedChanges.includes(box.value);
+    });
+    updatePromptCounters();
   }
+  state.formRound = roundNumber;
   document.getElementById('activeRoundNumber').value = String(roundNumber);
   document.getElementById('saveState').textContent = data?.submitted_at ? submissionStatusText(data) : 'Non soumis';
   renderParticipantRoundState(data);
+}
+
+function setParticipantInputsDisabled(disabled) {
+  document.getElementById('firstPromptInput').disabled = disabled;
+  document.getElementById('promptInput').disabled = disabled;
+  document.querySelectorAll('#changeOptions input[type="checkbox"]').forEach(box => { box.disabled = disabled; });
+}
+
+function updatePromptCounters() {
+  [['firstPromptInput', 'firstPromptCount'], ['promptInput', 'promptCount']].forEach(([inputId, counterId]) => {
+    const length = document.getElementById(inputId).value.length;
+    const counter = document.getElementById(counterId);
+    if (!counter) return;
+    const tooLong = length > LONG_PROMPT_WARNING;
+    counter.textContent = length === 0
+      ? ''
+      : tooLong
+        ? `${length} caractères : c'est très long pour un prompt. Vérifiez que ce n'est pas la réponse de l'IA.`
+        : `${length} caractères`;
+    counter.classList.toggle('warning', tooLong);
+  });
+}
+
+function selectedChanges() {
+  return [...document.querySelectorAll('#changeOptions input[type="checkbox"]')]
+    .filter(box => box.checked)
+    .map(box => box.value);
 }
 
 function renderParticipantRoundState(existingSubmission = null) {
@@ -640,17 +748,12 @@ function renderParticipantRoundState(existingSubmission = null) {
   const running = session.status === 'running';
 
   const statusBox = document.getElementById('participantRoundStatus');
-  const promptInput = document.getElementById('promptInput');
-  const resultInput = document.getElementById('resultInput');
-  const promptCountInput = document.getElementById('promptCountInput');
   const submit = document.getElementById('submitRound');
 
   if (finished) {
     statusBox.className = 'round-status finished';
     statusBox.textContent = 'Battle terminée — le formateur peut maintenant lancer le débrief.';
-    promptInput.disabled = true;
-    resultInput.disabled = true;
-    promptCountInput.disabled = true;
+    setParticipantInputsDisabled(true);
     submit.disabled = true;
     submit.textContent = 'Battle terminée';
     renderParticipantRankingAvailability();
@@ -661,25 +764,19 @@ function renderParticipantRoundState(existingSubmission = null) {
   if (isBeforeFirstLaunch || waiting) {
     statusBox.className = 'round-status waiting';
     statusBox.textContent = `Manche ${roundNumber} prête. Attendez le lancement du formateur.`;
-    promptInput.disabled = true;
-    resultInput.disabled = true;
-    promptCountInput.disabled = true;
+    setParticipantInputsDisabled(true);
     submit.disabled = true;
     submit.textContent = 'En attente du lancement';
   } else if (paused) {
     statusBox.className = 'round-status paused';
     statusBox.textContent = 'Chrono en pause par le formateur. Vous pouvez continuer à préparer votre réponse.';
-    promptInput.disabled = false;
-    resultInput.disabled = false;
-    promptCountInput.disabled = false;
+    setParticipantInputsDisabled(false);
     submit.disabled = false;
     submit.textContent = 'Soumettre la manche';
   } else if (running) {
     statusBox.className = 'round-status running';
     statusBox.textContent = 'Manche en cours — le chrono est commun à toutes les équipes.';
-    promptInput.disabled = false;
-    resultInput.disabled = false;
-    promptCountInput.disabled = false;
+    setParticipantInputsDisabled(false);
     submit.disabled = false;
   }
   renderParticipantTimer();
@@ -719,16 +816,22 @@ function submissionStatusText(submission) {
 
 async function submitCurrentRound() {
   if (!state.participantSession || !state.teamId) return;
+  const firstPrompt = document.getElementById('firstPromptInput').value.trim();
   const prompt = document.getElementById('promptInput').value.trim();
-  const aiResponse = document.getElementById('resultInput').value.trim();
-  const promptCountRaw = document.getElementById('promptCountInput').value;
-  const promptCount = promptCountRaw ? Number(promptCountRaw) : null;
+  if (!firstPrompt) {
+    alert('Ajoutez votre premier prompt (étape 1). Si vous n\'avez écrit qu\'un seul prompt, collez-le dans les deux cases.');
+    return;
+  }
   if (!prompt) {
-    alert('Ajoutez au moins votre prompt avant de soumettre la manche.');
+    alert('Ajoutez votre prompt final complet (étape 3) avant de soumettre la manche.');
     return;
   }
   if (!['running', 'paused'].includes(state.participantSession.status)) {
     alert('La manche n\'est pas encore ouverte par le formateur.');
+    return;
+  }
+  if ((firstPrompt.length > LONG_PROMPT_WARNING || prompt.length > LONG_PROMPT_WARNING)
+    && !window.confirm('Un de vos textes est très long pour un prompt. Avez-vous collé la réponse de l\'IA par erreur ?\n\nOK : envoyer quand même. Annuler : revenir corriger.')) {
     return;
   }
 
@@ -739,9 +842,9 @@ async function submitCurrentRound() {
     session_id: state.participantSession.id,
     team_id: state.teamId,
     round_number: roundNumber,
+    first_prompt_text: firstPrompt,
     prompt_text: prompt,
-    ai_response_text: aiResponse,
-    prompt_count: promptCount,
+    changes_made: selectedChanges(),
     submitted_at: new Date().toISOString(),
     delay_seconds: delaySeconds
   };
@@ -761,7 +864,7 @@ async function submitCurrentRound() {
     document.getElementById('saveState').textContent = submissionStatusText(result.data);
   } catch (error) {
     console.error(error);
-    alert(`Impossible d\'enregistrer la réponse : ${error.message}`);
+    alert(`Impossible d\'enregistrer vos prompts : ${error.message}`);
   } finally {
     button.disabled = false;
     renderParticipantRoundState();
@@ -774,7 +877,7 @@ function buildTrainerTeams() {
   const teams = state.trainerSession ? state.teams : [];
   const roundNumber = state.trainerSession ? displayRoundNumber(state.trainerSession) : 1;
 
-  for (let i = 1; i <= 8; i++) {
+  for (let i = 1; i <= TEAM_SLOTS; i++) {
     const existing = teams.find(t => t.team_slot === i);
     const submission = existing ? state.submissions.find(s => s.team_id === existing.id && s.round_number === roundNumber) : null;
     const evaluation = submission ? state.evaluations.find(e => e.submission_id === submission.id) : null;
@@ -786,7 +889,7 @@ function buildTrainerTeams() {
       const delay = Number(submission.delay_seconds || 0);
       statusText = delay > 0 ? `Soumis · +${formatTime(delay)}` : 'Soumis ✓';
       statusClass = delay > 0 ? 'state-late' : 'state-done';
-      if (evaluation) statusText += ` · ${evaluation.total}/20`;
+      if (evaluation) statusText += ` · ${formatStarValue(averageStars(evaluation.total, 1))} ★`;
     }
     const actions = submission?.submitted_at
       ? `<div class="team-actions"><span class="${statusClass}">${statusText}</span><button class="tiny review-button" type="button" data-review-submission="${submission.id}">Voir / noter</button></div>`
@@ -842,10 +945,9 @@ function renderReviewList() {
     const team = state.teams.find(t => t.id === sub.team_id);
     const evaluation = state.evaluations.find(e => e.submission_id === sub.id);
     const delay = Number(sub.delay_seconds || 0);
-    const promptCountLabel = sub.prompt_count ? ` · ${sub.prompt_count} prompt${sub.prompt_count > 1 ? 's' : ''}` : '';
     return `<button class="review-list-item ${state.selectedSubmissionId === sub.id ? 'active' : ''}" type="button" data-review-id="${sub.id}">
-      <span><span class="review-team-name"><i class="team-dot" style="background:${teamColors[(team?.team_slot || 1) - 1]}"></i>${team?.team_name || 'Équipe'}</span><small>${delay > 0 ? `Hors délai +${formatTime(delay)}` : 'Dans le temps'}${promptCountLabel}</small></span>
-      <span class="review-score-chip">${evaluation ? `${evaluation.total}/20` : 'À noter'}</span>
+      <span><span class="review-team-name"><i class="team-dot" style="background:${teamColors[(team?.team_slot || 1) - 1]}"></i>${team?.team_name || 'Équipe'}</span><small>${delay > 0 ? `Hors délai +${formatTime(delay)}` : 'Dans le temps'}</small></span>
+      <span class="review-score-chip">${evaluation ? `${formatStarValue(averageStars(evaluation.total, 1))} ★` : 'À noter'}</span>
     </button>`;
   }).join('');
   list.querySelectorAll('[data-review-id]').forEach(btn => btn.addEventListener('click', () => {
@@ -862,7 +964,26 @@ function evaluationTotalFromInputs() {
 
 function updateTrainerEvalTotal() {
   const el = document.getElementById('trainerEvalTotal');
-  if (el) el.textContent = evaluationTotalFromInputs();
+  if (el) el.textContent = formatStarValue(averageStars(evaluationTotalFromInputs(), 1));
+}
+
+function starRatingHtml(index, value) {
+  const current = Number(value);
+  return `<div class="star-rating" role="radiogroup" aria-label="Étoiles du critère ${index + 1}">
+    <input type="hidden" class="trainer-eval-select" data-criterion="${index}" value="${current}" />
+    ${[1, 2, 3, 4, 5].map(n => `<button type="button" class="star-button ${n <= current ? 'on' : ''}" data-star="${n}" role="radio" aria-checked="${n === current}" aria-label="${n} étoile${n > 1 ? 's' : ''}">★</button>`).join('')}
+  </div>`;
+}
+
+function changesChipsHtml(changes) {
+  const list = Array.isArray(changes) ? changes : [];
+  if (!list.length) return '<span class="muted">Aucune case cochée.</span>';
+  return list.map(key => `<span class="change-chip">${escapeHtml(CHANGE_OPTIONS[key] || key)}</span>`).join('');
+}
+
+function feedbackFieldsHtml(className, items, count, placeholder) {
+  const list = Array.isArray(items) ? items : [];
+  return Array.from({ length: count }, (_, i) => `<textarea class="${className}" rows="2" maxlength="300" placeholder="${placeholder} ${i + 1}">${escapeHtml(list[i] || '')}</textarea>`).join('');
 }
 
 function renderReviewDetail(submissionId) {
@@ -870,31 +991,79 @@ function renderReviewDetail(submissionId) {
   if (!detail) return;
   const sub = state.submissions.find(s => s.id === submissionId);
   if (!sub) {
-    detail.innerHTML = '<div class="empty-review"><strong>Sélectionnez une équipe</strong><span>Vous pourrez lire son prompt, sa réponse IA et attribuer une note sur 20.</span></div>';
+    detail.innerHTML = '<div class="empty-review"><strong>Sélectionnez une équipe</strong><span>Vous pourrez lire son premier prompt et son prompt final, attribuer des étoiles et rédiger son retour.</span></div>';
     return;
   }
   const team = state.teams.find(t => t.id === sub.team_id);
   const evaluation = state.evaluations.find(e => e.submission_id === sub.id);
-  const values = evaluation ? [evaluation.pertinence, evaluation.precision, evaluation.context_score, evaluation.utility] : [3,3,3,3];
+  const feedback = state.feedback.find(f => f.team_id === sub.team_id && f.round_number === sub.round_number);
+  const values = evaluation ? [evaluation.pertinence, evaluation.precision, evaluation.context_score, evaluation.utility] : [3, 3, 3, 3];
   const criteria = (scenarioOf(state.trainerPack, sub.round_number)?.grading.criteria || []).map(c => [c.label, c.question]);
   const delay = Number(sub.delay_seconds || 0);
-  const promptCountLabel = sub.prompt_count ? ` · ${sub.prompt_count} prompt${sub.prompt_count > 1 ? 's' : ''}` : '';
+  const average = formatStarValue(averageStars(values.reduce((a, b) => a + Number(b), 0), 1));
   detail.innerHTML = `<div class="review-production">
-    <div class="review-meta"><div><p class="panel-label">MANCHE ${sub.round_number} · ${escapeHtml(scenarioTitleOf(state.trainerPack, sub.round_number).toUpperCase())}</p><h3>${team?.team_name || 'Équipe'}</h3></div><span class="review-self">${delay > 0 ? `+${formatTime(delay)}` : 'dans le temps'}${promptCountLabel}</span></div>
-    <div class="production-block"><p class="panel-label">PROMPT</p><p>${escapeHtml(sub.prompt_text || '—')}</p></div>
-    <div class="production-block"><p class="panel-label">RÉSULTAT IA</p><p>${escapeHtml(sub.ai_response_text || 'Aucun résultat IA déposé.')}</p></div>
+    <div class="review-meta"><div><p class="panel-label">MANCHE ${sub.round_number} · ${escapeHtml(scenarioTitleOf(state.trainerPack, sub.round_number).toUpperCase())}</p><h3>${escapeHtml(team?.team_name || 'Équipe')}</h3></div><span class="review-self">${delay > 0 ? `+${formatTime(delay)}` : 'dans le temps'}</span></div>
+    <div class="production-block"><p class="panel-label">PREMIER PROMPT</p><p>${escapeHtml(sub.first_prompt_text || '—')}</p></div>
+    <div class="production-block"><p class="panel-label">PROMPT FINAL COMPLET</p><p>${escapeHtml(sub.prompt_text || '—')}</p></div>
+    <div class="production-block"><p class="panel-label">AMÉLIORATIONS COCHÉES PAR L'ÉQUIPE</p><div class="change-chips">${changesChipsHtml(sub.changes_made)}</div></div>
     <div class="evaluation-grid">
-      ${criteria.map((c, i) => `<div class="eval-card"><label>${c[0]}</label><small>${c[1]}</small><select class="trainer-eval-select" data-criterion="${i}">${[1,2,3,4,5].map(n => `<option value="${n}" ${n === Number(values[i]) ? 'selected' : ''}>${n} / 5</option>`).join('')}</select></div>`).join('')}
+      ${criteria.map((c, i) => `<div class="eval-card"><label>${escapeHtml(c[0])}</label><small>${escapeHtml(c[1])}</small>${starRatingHtml(i, values[i])}</div>`).join('')}
     </div>
-    <div class="evaluation-footer"><div class="trainer-score-total"><span>Note formateur</span><strong id="trainerEvalTotal">${values.reduce((a,b)=>a+Number(b),0)}</strong><small>/20</small></div><div class="eval-actions"><button class="secondary" type="button" id="projectSubmissionButton">Afficher en grand</button><button class="primary" type="button" id="saveTrainerEvaluation">${evaluation ? 'Mettre à jour la note' : 'Enregistrer la note'}</button></div></div>
+    <div class="feedback-edit">
+      <p class="panel-label">RETOUR POUR L'ÉQUIPE · VISIBLE À LA PUBLICATION</p>
+      <div class="feedback-columns">
+        <div><label>Points forts</label>${feedbackFieldsHtml('feedback-strength', feedback?.strengths, 2, 'Point fort')}</div>
+        <div><label>Axes d'amélioration</label>${feedbackFieldsHtml('feedback-axis', feedback?.axes, 2, 'Axe')}</div>
+      </div>
+    </div>
+    <div class="evaluation-footer"><div class="trainer-score-total"><span>Moyenne</span><strong id="trainerEvalTotal">${average}</strong><small>★ sur 5</small></div><div class="eval-actions"><button class="secondary" type="button" id="projectSubmissionButton">Afficher en grand</button><button class="primary" type="button" id="saveTrainerEvaluation">${evaluation ? 'Mettre à jour la note' : 'Enregistrer la note'}</button></div></div>
   </div>`;
-  detail.querySelectorAll('.trainer-eval-select').forEach(el => el.addEventListener('change', updateTrainerEvalTotal));
+  detail.querySelectorAll('.star-rating').forEach(group => {
+    const input = group.querySelector('.trainer-eval-select');
+    group.querySelectorAll('.star-button').forEach(star => star.addEventListener('click', () => {
+      const value = Number(star.dataset.star);
+      input.value = String(value);
+      group.querySelectorAll('.star-button').forEach(other => {
+        const n = Number(other.dataset.star);
+        other.classList.toggle('on', n <= value);
+        other.setAttribute('aria-checked', String(n === value));
+      });
+      updateTrainerEvalTotal();
+    }));
+  });
   document.getElementById('saveTrainerEvaluation').addEventListener('click', () => saveTrainerEvaluation(sub.id));
   document.getElementById('projectSubmissionButton').addEventListener('click', () => showProjection(sub.id));
 }
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>'"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[ch]));
+}
+
+function readFeedbackFields(selector) {
+  return [...document.querySelectorAll(selector)].map(el => el.value.trim()).filter(Boolean);
+}
+
+// Le retour écrit est stocké à part des notes (table team_feedback) pour que la base le réserve à l'équipe concernée.
+async function saveTeamFeedback(sub, strengths, axes) {
+  const existing = state.feedback.find(f => f.team_id === sub.team_id && f.round_number === sub.round_number);
+  if (!existing && !strengths.length && !axes.length) return;
+  const payload = {
+    session_id: state.trainerSession.id,
+    team_id: sub.team_id,
+    round_number: sub.round_number,
+    strengths,
+    axes,
+    written_by: state.userId,
+    updated_at: new Date().toISOString()
+  };
+  const result = existing
+    ? await db.from('team_feedback').update(payload).eq('id', existing.id).select().single()
+    : await db.from('team_feedback').insert(payload).select().single();
+  if (result.error) {
+    const failure = new Error(`La note est enregistrée, mais pas le retour écrit : ${result.error.message}`);
+    failure.feedbackOnly = true;
+    throw failure;
+  }
 }
 
 async function saveTrainerEvaluation(submissionId) {
@@ -923,25 +1092,42 @@ async function saveTrainerEvaluation(submissionId) {
       ? await db.from('trainer_evaluations').update(payload).eq('id', existing.id).select().single()
       : await db.from('trainer_evaluations').insert(payload).select().single();
     if (result.error) throw result.error;
+    await saveTeamFeedback(sub, readFeedbackFields('.feedback-strength'), readFeedbackFields('.feedback-axis'));
     await refreshTrainerData();
     state.selectedSubmissionId = sub.id;
     renderReviewList();
     renderReviewDetail(sub.id);
   } catch (error) {
     console.error(error);
-    alert(`Impossible d\'enregistrer la note : ${error.message}`);
+    if (error.feedbackOnly) {
+      alert(error.message);
+      await refreshTrainerData();
+    } else {
+      alert(`Impossible d\'enregistrer la note : ${error.message}`);
+    }
     button.disabled = false;
     button.textContent = 'Enregistrer la note';
   }
 }
 
+// Classement par moyenne d'étoiles (et non par somme) : une équipe notée sur une seule manche n'est pas pénalisée.
+// Deux équipes à la même moyenne partagent le même rang.
+function rankTeams(teams, evaluations) {
+  const items = teams.map(team => {
+    const evals = evaluations.filter(e => e.team_id === team.id);
+    return { team, rounds: evals.length, total: evals.reduce((sum, e) => sum + Number(e.total || 0), 0) };
+  }).filter(item => item.rounds > 0)
+    .sort((a, b) => (b.total * a.rounds) - (a.total * b.rounds) || b.rounds - a.rounds || a.team.team_slot - b.team.team_slot);
+  items.forEach((item, index) => {
+    const previous = items[index - 1];
+    const tied = previous && previous.total * item.rounds === item.total * previous.rounds;
+    item.rank = tied ? previous.rank : index + 1;
+  });
+  return items;
+}
+
 function cumulativeRanking() {
-  return state.teams.map(team => {
-    const evals = state.evaluations.filter(e => e.team_id === team.id);
-    const total = evals.reduce((sum, e) => sum + Number(e.total || 0), 0);
-    const rounds = evals.length;
-    return { team, total, rounds };
-  }).filter(item => item.rounds > 0).sort((a, b) => b.total - a.total || b.rounds - a.rounds || a.team.team_slot - b.team.team_slot);
+  return rankTeams(state.teams, state.evaluations);
 }
 
 function renderLeaderboard() {
@@ -949,10 +1135,43 @@ function renderLeaderboard() {
   if (!board) return;
   const ranking = cumulativeRanking();
   if (!ranking.length) {
-    board.innerHTML = '<p class="muted">Le classement apparaîtra dès qu\'une première production sera notée.</p>';
+    board.innerHTML = '<p class="muted">Le classement apparaîtra dès qu\'un premier prompt sera noté.</p>';
     return;
   }
-  board.innerHTML = ranking.map((item, index) => `<div class="leader-row"><strong>${index + 1}</strong><span>${escapeHtml(item.team.team_name)}<span class="leader-detail">${item.rounds}/${ROUND_COUNT} manche${item.rounds > 1 ? 's' : ''} notée${item.rounds > 1 ? 's' : ''}</span></span><span>${item.total}/${item.rounds * 20}</span></div>`).join('');
+  // Côté formateur : le total, puis le détail par critère (moyenne des manches notées de l'équipe).
+  const criteria = scenarioOf(state.trainerPack, 1)?.grading?.criteria || [];
+  const keys = ['pertinence', 'precision', 'context_score', 'utility'];
+  board.innerHTML = ranking.map(item => {
+    const evals = state.evaluations.filter(e => e.team_id === item.team.id);
+    const detail = criteria.map((c, i) => {
+      const average = evals.reduce((sum, e) => sum + Number(e[keys[i]] || 0), 0) / (evals.length || 1);
+      return `<li><span>${escapeHtml(c.label)}</span><span class="stars">${starString(average)} ${formatStarValue(average)}</span></li>`;
+    }).join('');
+    return `<div class="leader-row has-detail"><strong>${item.rank}</strong><span>${escapeHtml(item.team.team_name)}<span class="leader-detail">${item.rounds}/${ROUND_COUNT} manche${item.rounds > 1 ? 's' : ''} notée${item.rounds > 1 ? 's' : ''}</span></span><span class="leader-stars">${starsLabel(item.total, item.rounds)}</span><ul class="leader-criteria">${detail}</ul></div>`;
+  }).join('');
+}
+
+// Ce que les équipes disent avoir amélioré, manche par manche : matière du débrief général.
+function renderDebriefSynthesis() {
+  const target = document.getElementById('debriefSynthesis');
+  if (!target) return;
+  const cards = [];
+  for (let round = 1; round <= ROUND_COUNT; round++) {
+    const subs = state.submissions.filter(s => s.round_number === round && s.submitted_at);
+    if (!subs.length) continue;
+    const rows = Object.entries(CHANGE_OPTIONS).map(([key, label]) => {
+      const count = subs.filter(s => Array.isArray(s.changes_made) && s.changes_made.includes(key)).length;
+      const percent = Math.round((count / subs.length) * 100);
+      return `<div class="synthesis-row"><span>${escapeHtml(label)}</span><div class="synthesis-bar"><i style="width:${percent}%"></i></div><strong>${count}/${subs.length}</strong></div>`;
+    }).join('');
+    const same = subs.filter(s => s.first_prompt_text && s.first_prompt_text.trim() === String(s.prompt_text || '').trim()).length;
+    const none = subs.filter(s => !(Array.isArray(s.changes_made) && s.changes_made.length)).length;
+    const notes = [];
+    if (same) notes.push(`${same} équipe${same > 1 ? 's ont' : ' a'} rendu le même prompt au début et à la fin.`);
+    if (none) notes.push(`${none} équipe${none > 1 ? 's n\'ont' : ' n\'a'} rien coché.`);
+    cards.push(`<div class="synthesis-card"><p class="panel-label">MANCHE ${round} · ${escapeHtml(scenarioTitleOf(state.trainerPack, round).toUpperCase())}</p>${rows}${notes.length ? `<p class="note">${notes.join(' ')}</p>` : ''}</div>`);
+  }
+  target.innerHTML = cards.length ? cards.join('') : '<p class="muted">La synthèse apparaîtra dès que des équipes auront soumis leur manche.</p>';
 }
 
 function renderRankingPublicationState() {
@@ -961,15 +1180,15 @@ function renderRankingPublicationState() {
   const badge = document.getElementById('rankingPublicationBadge');
   if (!button || !state.trainerSession) return;
   const published = Boolean(state.trainerSession.ranking_published);
-  button.textContent = published ? 'Masquer le classement aux participants' : 'Publier le classement aux participants';
+  button.textContent = published ? 'Masquer le classement et les retours' : 'Publier le classement et les retours aux participants';
   button.classList.toggle('published', published);
   if (badge) {
     badge.textContent = published ? 'Publié' : 'Privé';
     badge.classList.toggle('published', published);
   }
   if (note) note.textContent = published
-    ? 'Le classement est maintenant visible en temps réel sur les téléphones des participants.'
-    : 'Le classement reste privé côté formateur. Publiez-le lorsque votre notation est prête.';
+    ? 'Le classement et les retours sont maintenant visibles en temps réel par les participants.'
+    : 'Le classement et les retours restent privés côté formateur. Publiez-les lorsque votre notation et vos commentaires sont prêts.';
 }
 
 async function toggleRankingPublication() {
@@ -978,13 +1197,13 @@ async function toggleRankingPublication() {
   if (willPublish) {
     const ranking = cumulativeRanking();
     if (!ranking.length) {
-      alert('Aucune production n\'est encore notée. Notez au moins une équipe avant de publier le classement.');
+      alert('Aucun prompt n\'est encore noté. Notez au moins une équipe avant de publier le classement.');
       return;
     }
     const incomplete = ranking.filter(item => item.rounds < ROUND_COUNT).length;
     const message = state.trainerSession.status === 'finished'
-      ? (incomplete ? `${incomplete} équipe(s) n\'ont pas encore ${ROUND_COUNT} manches notées. Publier quand même le classement ?` : 'Publier le classement final sur les téléphones des participants ?')
-      : 'La battle n\'est pas encore terminée. Publier un classement provisoire aux participants ?';
+      ? (incomplete ? `${incomplete} équipe(s) n\'ont pas encore ${ROUND_COUNT} manches notées. Publier quand même le classement ?` : 'Publier le classement final et les retours aux participants ? Relisez vos commentaires avant de valider.')
+      : 'La battle n\'est pas encore terminée. Publier un classement provisoire et les retours déjà rédigés aux participants ?';
     if (!window.confirm(message)) return;
   }
   try {
@@ -1000,14 +1219,18 @@ function showProjection(submissionId) {
   if (!sub) return;
   const team = state.teams.find(t => t.id === sub.team_id);
   const evaluation = state.evaluations.find(e => e.submission_id === sub.id);
-  const promptCountLabel = sub.prompt_count ? `${sub.prompt_count} prompt${sub.prompt_count > 1 ? 's' : ''} · ` : '';
   document.getElementById('projectionRoundLabel').textContent = `MANCHE ${sub.round_number} · ${scenarioTitleOf(state.trainerPack, sub.round_number)}`;
   document.getElementById('projectionTeamTitle').textContent = team?.team_name || 'Production';
+  document.getElementById('projectionFirstPrompt').textContent = sub.first_prompt_text || '—';
   document.getElementById('projectionPrompt').textContent = sub.prompt_text || '—';
-  document.getElementById('projectionResponse').textContent = sub.ai_response_text || 'Aucun résultat IA déposé.';
+  const changes = (Array.isArray(sub.changes_made) ? sub.changes_made : []).map(key => CHANGE_OPTIONS[key] || key).join(' · ');
+  const changesLabel = changes ? `Améliorations cochées : ${escapeHtml(changes)}` : 'Aucune amélioration cochée';
+  const criteria = scenarioOf(state.trainerPack, sub.round_number)?.grading.criteria || [];
+  const values = evaluation ? [evaluation.pertinence, evaluation.precision, evaluation.context_score, evaluation.utility] : [];
+  const detail = evaluation ? criteria.map((c, i) => `${escapeHtml(c.label)} ${starString(values[i])}`).join(' · ') : '';
   document.getElementById('projectionScore').innerHTML = evaluation
-    ? `<span>${promptCountLabel}Évaluation formateur · Pertinence ${evaluation.pertinence}/5 · Précision ${evaluation.precision}/5 · Contexte ${evaluation.context_score}/5 · Utilité ${evaluation.utility}/5</span><strong>${evaluation.total}/20</strong>`
-    : `<span>${promptCountLabel}Production non encore notée.</span><strong>—/20</strong>`;
+    ? `<span>${changesLabel}<br>${detail}</span><strong>${starsLabel(evaluation.total, 1)}</strong>`
+    : `<span>${changesLabel}<br>Prompt non encore noté.</span><strong>—</strong>`;
   showScreen('projection');
 }
 
@@ -1205,6 +1428,34 @@ async function prepareNextRound() {
   }
 }
 
+// Retour écrit par le formateur pour l'équipe du participant : étoiles par critère, points forts, axes.
+function renderOwnTeamFeedback(evaluations, feedbackRows) {
+  const panel = document.getElementById('ownTeamFeedback');
+  const body = document.getElementById('ownTeamFeedbackBody');
+  if (!panel || !body) return;
+  const mine = evaluations.filter(e => e.team_id === state.teamId).sort((a, b) => a.round_number - b.round_number);
+  panel.classList.toggle('hidden', !mine.length);
+  const list = (title, items, tone) => items.length
+    ? `<div class="feedback-list ${tone}"><p class="panel-label">${title}</p><ul>${items.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul></div>`
+    : '';
+  body.innerHTML = mine.map(evaluation => {
+    const scenario = scenarioOf(state.participantPack, evaluation.round_number);
+    const criteria = scenario?.grading?.criteria || [];
+    const values = [evaluation.pertinence, evaluation.precision, evaluation.context_score, evaluation.utility];
+    // Le filtre par équipe est une double sécurité : la base ne renvoie déjà que le retour de l'équipe du participant.
+    const written = feedbackRows.find(f => f.team_id === state.teamId && f.round_number === evaluation.round_number);
+    const strengths = Array.isArray(written?.strengths) ? written.strengths : [];
+    const axes = Array.isArray(written?.axes) ? written.axes : [];
+    const comments = list('POINTS FORTS', strengths, 'good') + list('À AMÉLIORER', axes, 'axis');
+    return `<section class="feedback-round">
+      <h3>Manche ${evaluation.round_number} · ${escapeHtml(scenario?.title || '')}</h3>
+      <p class="feedback-stars">${starsLabel(evaluation.total, 1)}</p>
+      <ul class="criteria-stars">${criteria.map((c, i) => `<li><span>${escapeHtml(c.label)}</span><span class="stars">${starString(values[i])}</span></li>`).join('')}</ul>
+      ${comments || '<p class="muted">Pas de commentaire écrit pour cette manche.</p>'}
+    </section>`;
+  }).join('');
+}
+
 async function openPublicRanking(silent = false) {
   if (!state.participantSession?.ranking_published) {
     if (!silent) alert('Le classement n\'est pas encore publié par le formateur.');
@@ -1213,30 +1464,33 @@ async function openPublicRanking(silent = false) {
   if (state.rankingOpenInProgress) return;
   state.rankingOpenInProgress = true;
   try {
-    const [teams, evaluations] = await Promise.all([
+    const [teams, totals, ownEvaluations, feedback] = await Promise.all([
       fetchTeams(state.participantSession.id),
-      fetchEvaluations(state.participantSession.id)
+      fetchRankingTotals(state.participantSession.id),
+      fetchOwnEvaluations(state.participantSession.id, state.teamId),
+      fetchFeedback(state.participantSession.id)
     ]);
-    const ranking = teams.map(team => {
-      const evals = evaluations.filter(e => e.team_id === team.id);
-      return { team, rounds: evals.length, total: evals.reduce((sum, e) => sum + Number(e.total || 0), 0) };
-    }).filter(x => x.rounds > 0).sort((a,b) => b.total - a.total || b.rounds - a.rounds || a.team.team_slot - b.team.team_slot);
+    const ranking = rankTeams(teams, totals);
 
     const board = document.getElementById('publicLeaderboard');
     const podium = document.getElementById('publicPodium');
     const ownNote = document.getElementById('ownTeamRankingNote');
-    const scoreLabel = item => `${item.total}/${item.rounds * 20}`;
+    const scoreLabel = item => starsLabel(item.total, item.rounds);
     const medals = ['🥇', '🥈', '🥉'];
 
-    podium.innerHTML = ranking.slice(0, 3).map((item, index) => `<article class="podium-card place-${index + 1} ${item.team.id === state.teamId ? 'own-team' : ''}"><span class="podium-medal">${medals[index]}</span><strong>${escapeHtml(item.team.team_name)}</strong><span>${scoreLabel(item)}</span><small>${item.rounds}/${ROUND_COUNT} manches notées</small></article>`).join('');
-    board.innerHTML = ranking.length ? ranking.map((item, index) => `<div class="leader-row ${item.team.id === state.teamId ? 'own-team' : ''}"><strong>${index + 1}</strong><span>${escapeHtml(item.team.team_name)}${item.team.id === state.teamId ? '<em>Votre équipe</em>' : ''}<span class="leader-detail">${item.rounds}/${ROUND_COUNT} manche${item.rounds > 1 ? 's' : ''} notée${item.rounds > 1 ? 's' : ''}</span></span><span>${scoreLabel(item)}</span></div>`).join('') : '<p class="muted">Le classement vient d\'être publié. Chargement des notes…</p>';
+    podium.innerHTML = ranking.slice(0, 3).map((item, index) => `<article class="podium-card place-${Math.min(item.rank, 3)} ${item.team.id === state.teamId ? 'own-team' : ''}"><span class="podium-medal">${medals[Math.min(item.rank, 3) - 1]}</span><strong>${escapeHtml(item.team.team_name)}</strong><span>${scoreLabel(item)}</span><small>${item.rounds}/${ROUND_COUNT} manches notées</small></article>`).join('');
+    board.innerHTML = ranking.length ? ranking.map(item => `<div class="leader-row ${item.team.id === state.teamId ? 'own-team' : ''}"><strong>${item.rank}</strong><span>${escapeHtml(item.team.team_name)}${item.team.id === state.teamId ? '<em>Votre équipe</em>' : ''}<span class="leader-detail">${item.rounds}/${ROUND_COUNT} manche${item.rounds > 1 ? 's' : ''} notée${item.rounds > 1 ? 's' : ''}</span></span><span>${scoreLabel(item)}</span></div>`).join('') : '<p class="muted">Le classement vient d\'être publié. Chargement des notes…</p>';
 
     const ownIndex = ranking.findIndex(item => item.team.id === state.teamId);
     if (ownNote) {
       ownNote.classList.toggle('hidden', ownIndex < 0);
-      if (ownIndex >= 0) ownNote.textContent = `Votre équipe termine ${ownIndex + 1}${ownIndex === 0 ? 're' : 'e'} avec ${scoreLabel(ranking[ownIndex])}.`;
+      if (ownIndex >= 0) ownNote.textContent = `Votre équipe est classée ${ranking[ownIndex].rank}${ranking[ownIndex].rank === 1 ? 're' : 'e'} avec ${scoreLabel(ranking[ownIndex])}.`;
     }
-    showScreen('ranking');
+    renderOwnTeamFeedback(ownEvaluations, feedback);
+    // Un rafraîchissement ne doit pas ramener la page en haut : on ne change d'écran que si on n'y est pas déjà.
+    if (document.querySelector('.screen.active')?.id !== 'ranking') showScreen('ranking');
+    document.getElementById('rankingToast')?.classList.add('hidden');
+    startRankingRefresh();
   } catch (error) {
     console.error(error);
     if (!silent) alert(`Impossible de charger le classement : ${error.message}`);
@@ -1246,6 +1500,16 @@ async function openPublicRanking(silent = false) {
   }
 }
 
+// La base ne prévient un participant que des changements de notes de sa propre équipe.
+// Tant que l'écran du classement est ouvert, on le relit donc toutes les 20 secondes pour suivre les autres équipes.
+function startRankingRefresh() {
+  if (state.rankingRefreshTimer) return;
+  state.rankingRefreshTimer = setInterval(() => {
+    const onRanking = document.querySelector('.screen.active')?.id === 'ranking';
+    if (onRanking && state.participantSession?.ranking_published && !document.hidden) openPublicRanking(true);
+  }, 20000);
+}
+
 function renderParticipantRankingAvailability() {
   const published = Boolean(state.participantSession?.ranking_published);
   const banner = document.getElementById('rankingBanner');
@@ -1253,7 +1517,9 @@ function renderParticipantRankingAvailability() {
   const finalButton = document.getElementById('finalRankingButton');
   const finalStatus = document.getElementById('finalRankingStatus');
   if (banner) banner.classList.toggle('hidden', !published);
-  if (toast) toast.classList.toggle('hidden', !published || !state.teamId);
+  // Le bandeau « Classement disponible » n'a plus d'utilité (et masquerait le podium) une fois le classement ouvert.
+  const onRanking = document.querySelector('.screen.active')?.id === 'ranking';
+  if (toast) toast.classList.toggle('hidden', !published || !state.teamId || onRanking);
   if (finalButton) finalButton.classList.toggle('hidden', !published);
   if (finalStatus) finalStatus.textContent = published ? 'Classement publié ! Ouverture…' : 'Classement en attente';
 }
@@ -1335,7 +1601,7 @@ document.getElementById('rctfToggle').addEventListener('click', () => {
 document.getElementById('copyPromptButton').addEventListener('click', async () => {
   const promptText = document.getElementById('promptInput').value;
   if (!promptText.trim()) {
-    alert('Écrivez votre prompt avant de le copier.');
+    alert('Écrivez votre prompt final avant de le copier.');
     return;
   }
   const btn = document.getElementById('copyPromptButton');
@@ -1348,6 +1614,28 @@ document.getElementById('copyPromptButton').addEventListener('click', async () =
     alert('Impossible de copier automatiquement. Sélectionnez le texte et copiez-le manuellement.');
   }
 });
+
+document.getElementById('firstPromptInput').addEventListener('input', updatePromptCounters);
+document.getElementById('promptInput').addEventListener('input', updatePromptCounters);
+
+document.getElementById('copyJoinLinkButton').addEventListener('click', async () => {
+  const input = document.getElementById('joinLinkInput');
+  const button = document.getElementById('copyJoinLinkButton');
+  if (!input.value) return;
+  try {
+    await navigator.clipboard.writeText(input.value);
+  } catch (error) {
+    // Repli : sélection du texte pour une copie manuelle.
+    input.focus();
+    input.select();
+    alert('Copie automatique impossible : le lien est sélectionné, copiez-le avec Ctrl+C.');
+    return;
+  }
+  const original = button.textContent;
+  button.textContent = '✓ Lien copié';
+  setTimeout(() => { button.textContent = original; }, 1800);
+});
+document.getElementById('joinLinkInput').addEventListener('focus', e => e.target.select());
 
 document.getElementById('submitRound').addEventListener('click', submitCurrentRound);
 document.getElementById('startRoundButton').addEventListener('click', startOrResumeRound);
